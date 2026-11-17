@@ -76,6 +76,24 @@ def slice_check(pr: dict, base: dict, spec: dict) -> tuple[list[str], list[str]]
     return blocked, lines
 
 
+def new_unreliable_items(pr: dict, base: dict, metric: str = "pass_rate") -> list[str]:
+    """Items that pass `metric` on all seeds in the baseline but not on all seeds in the PR."""
+    def all_pass(report: dict) -> dict[str, bool]:
+        acc: dict[str, bool] = {}
+        for r in report["rows"]:
+            acc[r["item_id"]] = acc.get(r["item_id"], True) and bool(r.get(metric))
+        return acc
+    a, b = all_pass(pr), all_pass(base)
+    return sorted(k for k in a.keys() & b.keys() if b[k] and not a[k])
+
+
+def new_failing_trials(pr: dict, base: dict, metric: str = "pass_rate") -> list[str]:
+    """item@seed trials that pass `metric` in the baseline and fail it in the PR."""
+    ok_base = {(r["item_id"], r["seed"]) for r in base["rows"] if r.get(metric) is True}
+    return [f"{r['item_id']}@{r['seed']}" for r in pr["rows"]
+            if (r["item_id"], r["seed"]) in ok_base and r.get(metric) is not True]
+
+
 def check(pr: dict, base: dict, spec: dict, base_spec: dict | None = None) -> tuple[list[str], list[str]]:
     if pr["manifest"]["eval_set_sha"] != base["manifest"]["eval_set_sha"]:
         return ["eval_set_sha"], ["  EVAL SET differs from the baseline's: re-run the baseline on the same eval set"]
@@ -103,6 +121,26 @@ def check(pr: dict, base: dict, spec: dict, base_spec: dict | None = None) -> tu
                                                n_resamples=bs.get("n_resamples", 1000), rng=bs.get("rng", 2027))
             note = f"Δ {d:+.3f} CI [{lo:+.3f}, {hi:+.3f}]"
             if hi < 0:
+                verdict = "fail"
+        if "max_new_unreliable" in th:
+            # Item level pass^k: an item that passed on every seed in the baseline and fails on any
+            # seed in the PR is a NEW unreliable item, even when another item got fixed and the
+            # average pass^5 stays flat.
+            newly = new_unreliable_items(pr, base)
+            note = (note + " " if note else "") + f"new unreliable items: {len(newly)}"
+            if newly:
+                note += f" ({', '.join(newly[:4])}{', ...' if len(newly) > 4 else ''})"
+            if len(newly) > th["max_new_unreliable"]:
+                verdict = "fail"
+        if "max_new_failing_trials" in th:
+            # Trial level: with a deterministic agent (A/A delta 0) the same (item, seed) must give the
+            # same verdict, so a trial that passes on main and fails in the PR is a regression even if
+            # another trial got fixed. With a real LLM this needs a tolerance taken from A/A.
+            newly = new_failing_trials(pr, base, mid)
+            note = (note + " " if note else "") + f"new failing trials: {len(newly)}"
+            if newly:
+                note += f" ({', '.join(newly[:3])}{', ...' if len(newly) > 3 else ''})"
+            if len(newly) > th["max_new_failing_trials"]:
                 verdict = "fail"
         if verdict != "ok" and m.get("blocking"):
             blocked.append(mid)
