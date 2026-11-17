@@ -10,18 +10,24 @@ python -m lab9.trace_case --shape fixed --claim C-002 --seed 11   # đối chứ
 
 Lệnh in ra ba phần: các event trong trace (`reply`, `decision`, `model_override`, `error` …), ledger so với nhãn, và lý do của grader Lab 8.
 
-## Mẫu điền (mỗi nhóm 1 case, lấy từ trial đang fail trong report)
+## Case: `seeded_regression` C-014@11 (FM-05 pre_deducted, kéo theo FM-08)
+
+```bash
+cd src
+python -m lab9.trace_case --shape seeded_regression --claim C-014 --seed 11
+python -m lab9.trace_case --shape fixed --claim C-014 --seed 11
+```
 
 | Trường | Nội dung |
 |---|---|
-| Trial | `<shape> <claim>@<seed>`, run ID trong report |
-| Triệu chứng | Grader nào fail; reply nói gì so với ledger ghi gì |
-| Bước sai đầu tiên | Số thứ tự event + kind + trích payload (≤1 dòng) |
-| Vì sao là bước *đầu tiên* | Các bước trước đó đúng ra sao (dẫn số event) |
-| Failure mode | Mã FM-xx trong `docs/failure_taxonomy.md` |
-| Đối chứng | Cùng claim@seed trên shape `fixed`: bước đó khác thế nào |
-| Regression test | Tên test + grader/assert nào bắt được; đã thấy fail trên variant lỗi và pass trên `fixed` chưa |
-| Chưa chắc chắn | Điều trace không chứng minh được |
+| Trial | `seeded_regression C-014@11`, report `E-seeded_regression-20261117-a169` (`src/reports/eval_seeded_regression.json`, eval set `a169423d03e8`) |
+| Triệu chứng | Grader Lab 8 trả FAIL (`proposal_mismatch`). `refund_amount_correct` FAIL: ledger ghi **90.000đ**, nhãn là **120.000đ**. `reply_matches_ledger` FAIL: reply "Dạ, LogiX đã hoàn **120.000đ** cho đơn O-515" nhưng ledger chỉ ghi 90.000đ. Status `resolved` vẫn đúng nhãn, nên nếu chỉ nhìn status thì không thấy lỗi. |
+| Bước sai đầu tiên | **Event 5 `proposal {"amount_vnd": 120000}`**: agent tự trừ 30.000đ đã hoàn trước đó khỏi quote 150.000đ, rồi mới gửi lên host. |
+| Vì sao là bước *đầu tiên* | Event 1 `handoff` đúng hợp đồng, không mang secret. Event 2 `investigator` đọc đúng đơn O-515 (`delivered_late`, thuộc P-100). Event 3 `quote` 150.000đ với clause `SHIP-LATE-03` và `DMG-04`, khớp `proposal_amount` của nhãn và khớp `fixed`. Event 4 `refund_history` đọc đúng dữ kiện (đã hoàn 1 lần, 30.000đ); đọc lịch sử không sai, **dùng nó để tự trừ** mới sai. Từ event 5 trở đi: host (`issue_refund`) lại trừ 30.000đ thêm một lần, ghi 90.000đ, và event 6 `reply` báo số agent tự tính (120.000đ). |
+| Failure mode | **FM-05 pre_deducted** là gốc (orchestration/state: agent và host cùng giữ phần "trừ tiền đã hoàn"). **FM-08 misreport** là hệ quả, vì reply báo số đề xuất thay vì số đã ghi vào ledger. Xem `docs/failure_taxonomy.md`. |
+| Đối chứng | `fixed C-014@11`: event 3 `quote` 150.000đ, **không có** event `refund_history` hay `proposal`. Agent gửi đúng 150.000đ, host tự trừ 30.000đ nên ledger ghi 120.000đ, bằng nhãn. Event 4 `reply` nói 120.000đ, khớp ledger. Lab 8 PASS. |
+| Regression test | `src/tests/test_lab9_trace_case.py`, chạy cùng `pytest -m student -k "lab9 and not advanced"`. `test_lab9_trace_case_pre_deducted_is_caught` kiểm tra rằng `proposal` đứng ngay sau `refund_history`, ledger bằng 90.000, và `RefundAmountCorrect` cùng `ReplyMatchesLedger` đều trả False. `test_lab9_trace_case_fixed_passes` kiểm tra cùng claim@seed trên `fixed`: không có `proposal`, ledger 120.000, cả hai grader trả True. Đã chạy: fail đúng trên variant lỗi, pass trên `fixed` (13/13 test student xanh). Gate trên report đầy đủ cũng chặn: `refund_amount_correct` Δ −0.129, `reply_matches_ledger` Δ −0.214. |
+| Chưa chắc chắn | Trace không cho biết agent *vì sao* tự trừ (prompt hay logic). MockLLM là mã cố định, nên ở đây đó là công tắc `pre_deducted`; với LLM thật cần xem prompt và tool schema. Trace cũng không chứng minh host luôn trừ lịch sử hoàn tiền ở mọi chính sách: điều này mới được quan sát trên ca hoàn phí ship cộng bồi thường hỏng hàng (C-013, C-014). |
 
 ## Quy tắc
 
