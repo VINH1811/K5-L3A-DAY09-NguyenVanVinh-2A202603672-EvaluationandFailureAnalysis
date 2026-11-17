@@ -77,10 +77,14 @@ Xem `docs/judge_audit.md`.
 
 ## 6. Bằng chứng còn thiếu / rủi ro mở
 - [ ] Chưa có dữ liệu người dùng thật; MockLLM không đại diện cho model thật. Cần đo nhiễu A/A trên LLM thật trước khi chốt sàn.
-- [ ] Chỉ 14 item nên CI rộng, gate chỉ bắt được hồi quy lớn. FM-06 và FM-09 mới có 1 item.
+- [ ] Chỉ 14 item nên CI rộng, gate chỉ bắt được hồi quy lớn. FM-06 và FM-09 mới có 1 item. *Xử lý một phần ở v2:* eval set v2 có 28 item; FM-06 có 3 item, FM-09 có 4 item. 28 item vẫn nhỏ, và slice `escalation` mới có 4 item.
 - [ ] Judge được calibrate bằng replay trên CSV đã công khai, chưa có tập held-out mới; nhãn người cũng có lỗi (H-081).
 - [ ] `reply_matches_ledger` chỉ có ý nghĩa với shape ghi event `reply` vào trace. `swarm` của Lab 8 không ghi reply nên mặc định đạt.
-- [ ] Lỗi xuất hiện thưa (1/5 seed) và lỗi chỉ nằm trong một slice nhỏ chưa được gate riêng. Sẽ xử lý ở v2 (slice gate, `pass_hat_5`).
+- [x] Lỗi xuất hiện thưa (1/5 seed) và lỗi chỉ nằm trong một slice nhỏ chưa được gate riêng. **Đã xử lý ở v2** (`config/metric_spec_v2.yaml`, baseline `E-swarm-20261117-bcc6`):
+  - Slice `money_movement` chặn `slice_regression`, vốn có `pass_rate` chung 0.936 trên sàn.
+  - `pass_hat_5` (min 0.88, không thêm item chập chờn) chặn `flaky_regression` (0.571).
+  - Luật trial mới fail bắt bug chỉ ở 1/5 seed.
+  - `lab9.mutation` đạt 3/3, 0 báo nhầm. Giới hạn còn lại: bug chỉ ở 1/3 seed không phát hiện ổn định với 5 seed (xem eval card mục v2).
 
 ## 7. Khi nào lên v1.2
 - Đổi eval set (thêm item từ trace case, ví dụ C-014@11 với `provenance.from_trace`, hoặc thêm pack adversarial): tăng `eval_set_version`, chạy lại baseline.
