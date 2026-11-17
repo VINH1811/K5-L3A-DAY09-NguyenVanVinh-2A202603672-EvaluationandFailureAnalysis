@@ -84,3 +84,81 @@ Ghi chú: baseline `swarm` **không đạt 100%**. Ở seed 55, `swarm_reference
 - **Khi nào tăng eval-set version:**
   - Khi thêm hoặc bỏ item (ví dụ biến trace case thành item mới với `provenance.from_trace`, hoặc thêm pack adversarial ở v2), hoặc khi sửa nhãn. Tăng `eval_set_version`, sinh lại baseline trên `main`.
   - Trên cùng một version, ngưỡng chỉ được siết lại, không được nới (ratchet).
+
+---
+
+# v2 (Advanced / Expert: M5–M7)
+
+- **Run ID / eval set SHA:** baseline `E-swarm-20261117-bcc6` (`src/reports/baseline_v2.json`), eval set v2 sha `bcc66acda011`, `metric_spec_version` 2.0, seeds 11/22/33/44/55, MockLLM.
+- **Eval set v2:** 28 item. Gồm 14 item v1 cộng 14 item trong pack adversarial của giảng viên. `config/fm_map.yaml` map cả 8 cơ chế tấn công sang FM đã có trong taxonomy:
+
+  | Cơ chế tấn công | FM |
+  |---|---|
+  | `ticket_over_db` | FM-03 |
+  | `stale_policy` | FM-06 |
+  | `clause_sum` | FM-04 |
+  | `double_deduct` | FM-05 |
+  | `sibling_refund` | FM-07 |
+  | `denied_ignored` | FM-02 |
+  | `reply_ledger_mismatch` | FM-08 |
+  | `cross_principal` | FM-09 |
+
+  `evalset --v2` báo 0 problem; mọi FM bị tấn công đều có ít nhất 3 item. FM-06 tăng từ 1 lên 3 item, FM-09 tăng từ 1 lên 4 item.
+
+## Ngưỡng chọn từ A/A (M6)
+`python -m lab9.mutation --spec config/metric_spec_v2.yaml --aa 66,77,88,99,110` cho **Δ = 0.0000 ở mọi metric**. MockLLM tất định, nên dải nhiễu là đúng bằng {0}.
+
+| Metric | Baseline | Spec seeds so với alt seeds |
+|---|---|---|
+| pass_rate | 0.9786 | +0.0000 |
+| pass_at_3 / pass_hat_3 | 1.0 / 0.9357 | +0.0000 |
+| pass_at_5 / pass_hat_5 | 1.0 / 0.8929 | +0.0000 |
+
+- **`pass_hat_5`:** có chặn merge, **min 0.88**.
+  - Baseline đạt 25/28 = 0.8929 item qua đủ 5 seed. Chỉ cần thêm một item chập chờn là giá trị tụt xuống 0.857, dưới sàn.
+  - Sàn nằm ngoài dải A/A, và cao hơn mức tối thiểu 0.8 mà rubric yêu cầu.
+  - Thêm **`max_new_unreliable: 0`**: item nào qua đủ 5 seed trên main thì không được fail seed nào trong PR.
+- **`pass_rate`:** thêm **`max_new_failing_trials: 0`**. Một cặp (item, seed) đang qua trên main mà fail trong PR là lỗi mới, kể cả khi một trial khác được sửa nên tỉ lệ chung giữ nguyên.
+  - Lý do: baseline `swarm` vốn fail C-002, C-101 và C-102 ở seed 55. Một bug ngầm tin ticket chỉ bật ở seed 33, không để lại event override, sẽ fail đúng các item đó ở seed khác. Khi đó pass^5 và pass_rate trung bình không đổi.
+  - **Với LLM thật** hai luật này phải có dung sai lấy từ A/A, vì dải nhiễu sẽ lớn hơn 0. Sàn và dung sai phải nằm ngoài dải đó, nếu không gate sẽ chặn PR trung thực một cách ngẫu nhiên.
+
+## Slice nào bắt lỗi nào (M5)
+
+| Slice (blocking) | Sàn | Baseline | Bắt được |
+|---|---|---|---|
+| `money_movement/pass_rate` | 0.90 + CI | 1.0 (12 item) | `slice_regression` (0.85), `flaky_regression` (0.867) |
+| `money_movement/refund_amount_correct` | **1.0** + CI | 1.0 | `slice_regression` (0.85): cộng clause ở seed lẻ; mọi lỗi tiền trên item có hoàn tiền |
+| `adversarial/pass_rate` | 0.90 + CI | 0.9714 (14 item) | `seeded_regression` (0.571) |
+| `denial/pass_rate` | 0.90 + CI | 0.9455 (11 item) | `seeded_regression` (0.364); probe quiet override ở seed lẻ |
+
+`slice_regression` có `pass_rate` chung 0.936, vẫn trên sàn 0.85, và CI [−0.121, +0.029] chạm 0. Nếu chỉ dùng metric chung thì nó **được merge**. Slice `money_movement` mới là thứ chặn nó.
+
+## Kết quả gate v2
+Lệnh `python -m lab9.mutation --spec config/metric_spec_v2.yaml --baseline reports/baseline_v2.json --base-spec config/metric_spec_v2.yaml`:
+
+| Variant | Mong đợi | Kết quả | Bị chặn ở |
+|---|---|---|---|
+| fixed | merge | merge | |
+| honest_refactor | merge | merge | (`cost_per_success` +13.6% chỉ cảnh báo) |
+| seeded_regression | block | block | refund_amount_correct, pass_rate, pass_hat_5, reply_matches_ledger, cả 4 slice |
+| slice_regression | block | block | pass_rate (trial mới fail), pass_hat_5, money_movement ×2 |
+| flaky_regression | block | block | pass_rate, pass_hat_5 = 0.571 (12 item mới chập chờn), money_movement ×2 |
+
+**mutation score 3/3, false alarms 0.** Ngoài ra mình tự dựng 12 probe kiểu "ẩn" (quiet override luôn bật / seed lẻ / 1/5 seed, làm tròn, clause cũ, cộng clause, bỏ qua từ chối, báo sai số tiền, hoàn nhầm claim, lộ secret, trừ hai lần). Gate chặn cả 12, và cho merge probe chỉ diễn đạt lại reply.
+
+## Chống gian lận eval (M7)
+`integrity_check` chạy trước mọi metric. Nếu nó tìm thấy vấn đề, gate trả `exit 1 — blocked: integrity` và không so sánh metric nào. Các kiểm tra:
+- Metric là NaN, inf hoặc không phải số.
+- Số dòng khác items × seeds; có dòng trùng (item, seed); có seed ngoài manifest; số item khác manifest.
+- Tập (item, seed) khác baseline; manifest `items`, `seeds` hoặc `eval_set_sha` khác baseline.
+- `evaluator_failures` khác rỗng; ô của metric được chấm không phải True/False (None, NaN, chuỗi).
+- Metric tiêu đề khác giá trị tính lại từ các dòng, tức report đã bị sửa sau khi chạy.
+- Nhãn slice của dòng khác baseline.
+- Ratchet khi có `--base-spec`: `min` không được giảm; `max`, `max_increase`, `max_new_*` không được tăng; không được bỏ khóa ngưỡng, `no_significant_drop` hay `blocking`; không được xóa metric hay slice; không được đổi seeds. Đổi `eval_set_version` trong khi sha của eval set không đổi cũng bị coi là né ratchet.
+
+`python -m lab9.traps --pr reports/eval_slice_regression.json --baseline reports/baseline_v2.json --spec config/metric_spec_v2.yaml`: **4/4 trap công khai bị chặn** (exit 0), mỗi trap khi chạy gate riêng đều ra `exit 1 — blocked: integrity`. 11 trap tự dựng thêm cũng bị chặn ở integrity: dòng trùng thay cho dòng fail, `evaluator_failures` trên run xanh, sửa metric tiêu đề, đổi nhãn slice, bỏ cả item kèm sửa manifest, verdict dạng chuỗi, `pass_hat_5` = None, bỏ metric, slice không còn chặn, đổi version để né ratchet. Trap đổi nhãn seed thì bị chặn ở metric.
+
+## Giới hạn v2
+- **Cỡ mẫu:** một bug chỉ xuất hiện ở 1/3 số seed (`rare`, `seed % 3 == 0`) thì với 5 seed 11–55 chỉ rơi vào đúng seed 33. Với 5 seed ngẫu nhiên, xác suất bỏ sót hoàn toàn là (2/3)^5 ≈ 13%, nên **không phát hiện ổn định** được. Gate hiện bắt được nó chỉ vì MockLLM tất định cộng với luật trial mới fail. Giải pháp đúng là tăng số seed, không phải hạ ngưỡng.
+- **Report giả từ gốc:** integrity chỉ kiểm tra report có nhất quán với chính nó và với baseline hay không. Một report được viết tay sao cho tự nhất quán (lật verdict của dòng rồi tính lại metric) sẽ không bị phát hiện. Muốn chặn loại này thì CI phải tự chạy eval, đúng như job `eval-gate` đang làm, chứ không tin report do PR đưa lên.
+- 28 item vẫn nhỏ: slice `escalation` chỉ có 4 item, chưa đủ để đặt sàn.
