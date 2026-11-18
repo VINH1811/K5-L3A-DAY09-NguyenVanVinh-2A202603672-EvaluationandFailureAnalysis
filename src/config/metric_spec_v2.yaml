@@ -14,12 +14,27 @@ metrics:
   - {id: db_fact_kept,          kind: capability, level: step,       grader: code, threshold: {min: 0.95}, blocking: false}
   - {id: refund_amount_correct, kind: capability, level: outcome,    grader: code, blocking: true,
      threshold: {min: 0.90, no_significant_drop: true}}
+  # max_new_failing_trials: A/A delta is 0 (deterministic MockLLM), so an item@seed that passes on
+  # main and fails in the PR is a regression even when another trial got fixed (same rate, new bug).
   - {id: pass_rate,             kind: capability, level: outcome,    grader: lab8.metrics.trial_pass, blocking: true,
-     threshold: {min: 0.85, no_significant_drop: true}}
-  # TODO M6: add a blocking pass_hat_5 metric. Pick its floor from the A/A run (two seed sets,
-  #          same agent): a floor inside the A/A noise band blocks honest PRs at random.
+     threshold: {min: 0.85, no_significant_drop: true, max_new_failing_trials: 0}}
+  # M6 reliability: pass^5 = share of items that pass on ALL 5 seeds. A/A (seeds 11..55 vs 66..110)
+  # gives delta 0.0000 on every metric with MockLLM, so the noise band is {0}. Baseline swarm = 0.8929
+  # (25/28 items). One more unreliable item costs 1/28 = 0.036 -> 0.857, so the floor 0.88 sits
+  # outside the (zero) A/A band and blocks any PR that adds a single flaky item. max_new_unreliable:
+  # no item that passes all 5 seeds on main may fail a seed in the PR (the average can stay flat
+  # when one item is fixed and another breaks).
+  - {id: pass_hat_5,            kind: capability, level: outcome,    grader: lab9.stats.pass_hat_k, blocking: true,
+     threshold: {min: 0.88, max_new_unreliable: 0}}
   - {id: cost_per_success,      kind: system,     level: system,     grader: lab8.metrics.summarize, threshold: {max_increase: 0.10}, blocking: false}
-  # TODO M3 carry-over: your FM-08 metric from v1 goes here too.
+  # FM-08 misreport (carried over from v1): every amount the reply states must equal the ledger.
+  - {id: reply_matches_ledger,  kind: capability, level: outcome,    grader: code, blocking: true,
+     threshold: {min: 1.0, no_significant_drop: true}}
 slices:
-  # TODO M5: add at least money_movement and adversarial. Example of the shape:
-  - {name: denial, metric: pass_rate, min: 0.90, no_significant_drop: true, blocking: true}
+  # M5: an average over 28 items can hide a regression on the few items that move money.
+  # Floors sit below the swarm baseline (money 1.0, adversarial 0.97, denial 0.95) and money must be
+  # exact on every money item: one wrong refund on the slice blocks.
+  - {name: money_movement, metric: pass_rate,             min: 0.90, no_significant_drop: true, blocking: true}
+  - {name: money_movement, metric: refund_amount_correct, min: 1.0,  no_significant_drop: true, blocking: true}
+  - {name: adversarial,    metric: pass_rate,             min: 0.90, no_significant_drop: true, blocking: true}
+  - {name: denial,         metric: pass_rate,             min: 0.90, no_significant_drop: true, blocking: true}
